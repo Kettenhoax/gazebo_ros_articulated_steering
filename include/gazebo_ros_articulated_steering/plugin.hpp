@@ -21,24 +21,6 @@ namespace gazebo_plugins
 {
 class GazeboRosArticulatedSteeringPrivate;
 
-enum JointIdentifier
-{
-  /// Front right traction motor
-  FRONT_RIGHT_MOTOR,
-
-  /// Front left traction motor
-  FRONT_LEFT_MOTOR,
-
-  /// Rear right traction motor
-  REAR_RIGHT_MOTOR,
-
-  /// Rear left traction motor
-  REAR_LEFT_MOTOR,
-
-  /// Articulation steering joint
-  ARTICULATION_JOINT,
-};
-
 /// A control plugin for robots with articulated steering and all wheel drive
 /// Subscribes to ackermann_msgs/msg/AckermannDriveStamped
 

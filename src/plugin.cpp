@@ -54,6 +54,24 @@ struct ControlledJoint
   rclcpp::Publisher<control_msgs::msg::PidState>::SharedPtr pid_publisher;
 };
 
+enum JointIdentifier
+{
+  /// Front right traction motor
+  FRONT_RIGHT_MOTOR = 0,
+
+  /// Front left traction motor
+  FRONT_LEFT_MOTOR,
+
+  /// Rear right traction motor
+  REAR_RIGHT_MOTOR ,
+
+  /// Rear left traction motor
+  REAR_LEFT_MOTOR,
+
+  /// Articulation steering joint
+  ARTICULATION_JOINT,
+};
+
 class GazeboRosArticulatedSteeringPrivate
 {
 public:
@@ -150,7 +168,8 @@ static double GetVelocityJointDefaultGain(gazebo::physics::JointPtr joint)
 
 static double GetPositionJointDefaultGain(gazebo::physics::JointPtr joint)
 {
-  return joint->UpperLimit(0) * joint->GetEffortLimit(0);
+  return 1.0;
+  // return joint->UpperLimit(0) * joint->GetEffortLimit(0);
 }
 
 void GazeboRosArticulatedSteering::Load(gazebo::physics::ModelPtr _model, sdf::ElementPtr _sdf)
@@ -186,43 +205,40 @@ void GazeboRosArticulatedSteering::Load(gazebo::physics::ModelPtr _model, sdf::E
     impl_->joints_[id].scoped_name = impl_->joints_[id].joint->GetScopedName();
   }
 
-  for (auto i :
-    {FRONT_RIGHT_MOTOR, FRONT_LEFT_MOTOR, REAR_RIGHT_MOTOR, REAR_LEFT_MOTOR, ARTICULATION_JOINT})
-  {
-    auto id = (JointIdentifier)i;
-    auto joint_name = impl_->joints_[id].scoped_name;
-    auto & joint = impl_->joints_[id].joint;
+  size_t i = 0;
+  for (auto & j : impl_->joints_) {
+    JointIdentifier id = (JointIdentifier)i;
     auto default_gain =
-      IsVelocityJoint(i) ? GetVelocityJointDefaultGain(joint) : GetPositionJointDefaultGain(joint);
+      IsVelocityJoint(id) ? GetVelocityJointDefaultGain(j.joint) : GetPositionJointDefaultGain(
+      j.joint);
     if (ignition::math::isnan(default_gain)) {
       default_gain = 1.0;
     }
-    auto steering_default_pid = Vector3d(default_gain, 0.0, 0.0);
-    auto steering_default_range = Vector2d(-default_gain, default_gain);
-
-    auto gain = _sdf->Get(joint_name + "_pid_gain", steering_default_pid).first;
-    auto i_range = _sdf->Get(joint_name + "_i_range", steering_default_range).first;
+    auto gain = _sdf->Get(j.scoped_name + "_pid_gain", Vector3d(default_gain, 0.0, 0.0)).first;
+    auto i_range =
+      _sdf->Get(j.scoped_name + "_i_range", Vector2d(-default_gain, default_gain)).first;
 
     RCLCPP_INFO(
       impl_->ros_node_->get_logger(),
       "Gains [p %.2f, i %.2f, d %.2f] and i_range [%.2f,%.2f] on %s", gain.X(),
-      gain.Y(), gain.Z(), i_range.X(), i_range.Y(), joint_name.c_str());
+      gain.Y(), gain.Z(), i_range.X(), i_range.Y(), j.scoped_name.c_str());
 
-    impl_->joints_[id].pid = std::make_unique<gazebo::common::PID>();
-    impl_->joints_[id].pid->Init(gain.X(), gain.Y(), gain.Z(), i_range.Y(), i_range.X());
+    j.pid = std::make_unique<gazebo::common::PID>();
+    j.pid->Init(gain.X(), gain.Y(), gain.Z(), i_range.Y(), i_range.X());
 
-    auto controller = std::make_unique<JointController>(_model);
-    controller->AddJoint(joint);
+    j.controller = std::make_unique<JointController>(_model);
+    j.controller->AddJoint(j.joint);
 
     if (IsVelocityJoint(id)) {
-      controller->SetVelocityPID(joint_name, *impl_->joints_[id].pid);
+      j.controller->SetVelocityPID(j.scoped_name, *j.pid);
     } else {
-      controller->SetPositionPID(joint_name, *impl_->joints_[id].pid);
+      j.controller->SetPositionPID(j.scoped_name, *j.pid);
     }
-    impl_->joints_[id].controller = std::move(controller);
+    i++;
   }
 
   impl_->InferWheelRadius(&impl_->wheel_radius_);
+  RCLCPP_INFO(impl_->ros_node_->get_logger(), "Wheel radius %.2f", impl_->wheel_radius_);
 
   auto update_rate = _sdf->Get<double>("update_rate", 100.0).first;
   if (update_rate > 0.0) {
@@ -244,12 +260,6 @@ void GazeboRosArticulatedSteering::Load(gazebo::physics::ModelPtr _model, sdf::E
     impl_->ros_node_->get_logger(),
     "Subscribed to [%s]", impl_->cmd_sub_->get_topic_name());
 
-  // impl_->odom_pub_ = impl_->ros_node_->create_publisher<AckermannDriveStamped>("odom_drive", 1);
-
-  // RCLCPP_INFO(
-  //   impl_->ros_node_->get_logger(),
-  //   "Publishing [%s]", impl_->odom_pub_->get_topic_name());
-
   if (_sdf->Get("publish_pid", true).first) {
     for (const auto & joint_name : joint_names) {
       auto name = joint_name.second;
@@ -266,8 +276,6 @@ void GazeboRosArticulatedSteering::Load(gazebo::physics::ModelPtr _model, sdf::E
   }
 
   impl_->state_frame_id_ = _sdf->Get<std::string>("robot_base_frame", "base_footprint").first;
-
-  // Listen to the update event (broadcast every simulation iteration)
   impl_->update_connection_ = gazebo::event::Events::ConnectWorldUpdateBegin(
     std::bind(&GazeboRosArticulatedSteeringPrivate::OnUpdate, impl_.get(), std::placeholders::_1));
 }
@@ -290,15 +298,6 @@ void GazeboRosArticulatedSteeringPrivate::OnUpdate(const gazebo::common::UpdateI
     for (auto & joint : joints_) {
       joint.controller->Update();
     }
-    // auto msg = odometry_->compute(model_, joints_);
-    // msg->header.frame_id = state_frame_id_;
-    // msg->header.stamp = ros_node_->now();
-    // msg->data.speed = speed_sensing_noise_->Apply(msg->data.speed);
-    // msg->data.front_steering_angle = steering_angle_sensing_noise_->Apply(
-    //   msg->data.front_steering_angle);
-    // msg->data.rear_steering_angle = steering_angle_sensing_noise_->Apply(
-    //   msg->data.rear_steering_angle);
-    // odom_pub_->publish(std::move(msg));
   }
 }
 
@@ -322,7 +321,7 @@ void GazeboRosArticulatedSteeringPrivate::UpdateControllers(double dt)
     motor_speed = 0.0;
   }
 
-  double errors[4];
+  double errors[5];
 
   // set wheel speed efforts
   for (auto wheel_i : {FRONT_RIGHT_MOTOR, FRONT_LEFT_MOTOR, REAR_RIGHT_MOTOR, REAR_LEFT_MOTOR}) {
@@ -338,17 +337,22 @@ void GazeboRosArticulatedSteeringPrivate::UpdateControllers(double dt)
 
   auto articulation_angle = last_cmd_.drive.steering_angle;
   if (ignition::math::isnan(articulation_angle)) {
-    RCLCPP_WARN(ros_node_->get_logger(), "NaN articulation angle");
+    RCLCPP_WARN(ros_node_->get_logger(), "NaN target articulation angle");
     articulation_angle = 0.0;
   }
 
   // set articulation effort
-  auto name = joints_[ARTICULATION_JOINT].scoped_name;
-  auto joint = joints_[ARTICULATION_JOINT].joint;
+  auto & articulation_joint = joints_[ARTICULATION_JOINT];
+  auto name = articulation_joint.scoped_name;
+  auto joint = articulation_joint.joint;
   auto current_angle = joint->Position(0);
+  if (ignition::math::isnan(current_angle)) {
+    RCLCPP_WARN(ros_node_->get_logger(), "NaN current articulation angle");
+    current_angle = 0.0;
+  }
   errors[ARTICULATION_JOINT] = current_angle - articulation_angle;
 
-  if (!joints_[ARTICULATION_JOINT].controller->SetPositionTarget(name, articulation_angle)) {
+  if (!articulation_joint.controller->SetPositionTarget(name, articulation_angle)) {
     RCLCPP_ERROR(ros_node_->get_logger(), "Joint [%s] was not found", name.c_str());
   }
 
