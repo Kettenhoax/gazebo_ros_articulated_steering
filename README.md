@@ -63,12 +63,3 @@ Parameters on the geometry of the vehicle are derived from the links and joints 
       ...
 </model>
 ```
-
-## License and Copyright
-
-`controller.hpp` and `controller.cpp` are adapted from the BSD-licensed [ros_controllers (https://github.com/ros-controls/ros_controllers)](https://github.com/ros-controls/ros_controllers), with a modified interface to the plugin.
-The rest of the repository is Apache-2.0-licensed, with copyright holders determined in the file headers.
-Contributions to existing files should be made under the license of that file.
-
-The `package.xml` determines the license for files not otherwise marked, with 2021 copyright holder AIT Austrian Institute of Technology GmbH.
-New files should be created under this license.
