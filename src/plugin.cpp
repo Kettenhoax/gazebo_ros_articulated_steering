@@ -214,9 +214,9 @@ void GazeboRosArticulatedSteering::Load(gazebo::physics::ModelPtr _model, sdf::E
     if (ignition::math::isnan(default_gain)) {
       default_gain = 1.0;
     }
-    auto gain = _sdf->Get(j.scoped_name + "_pid_gain", Vector3d(default_gain, 0.0, 0.0)).first;
+    auto gain = _sdf->Get(joint_names[id] + "_pid_gain", Vector3d(default_gain, 0.0, 0.0)).first;
     auto i_range =
-      _sdf->Get(j.scoped_name + "_i_range", Vector2d(-default_gain, default_gain)).first;
+      _sdf->Get(joint_names[id] + "_i_range", Vector2d(-default_gain, default_gain)).first;
 
     RCLCPP_INFO(
       impl_->ros_node_->get_logger(),
